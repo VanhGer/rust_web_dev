@@ -1,20 +1,28 @@
 #![warn(clippy::all)]
 
 use handle_errors::return_error;
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::fmt::format::FmtSpan;
 use warp::{http::Method, Filter};
 mod routes;
 mod store;
 mod types;
+mod profanity;
+
 
 #[tokio::main]
 async fn main() {
     let log_filter = std::env::var("RUST_LOG")
         .unwrap_or_else(|_|
-            "practical_rust_book=info,warp=error".to_owned()
+            "handle_errors=warn,web=info,warp=error".to_owned()
         );
     
-    let store = store::Store::new("postgres:/ /localhost:5432/rustwebdev").await;
+    let store = store::Store::new("postgresql://postgres:522017@localhost:5432/rustwebdev").await;
+    sqlx::migrate!()
+        .run(&store.clone().connection)
+        .await
+        .expect("Cannot run migration");
+
     let store_filter = warp::any().map(move || store.clone());
 
     tracing_subscriber::fmt()
@@ -34,15 +42,15 @@ async fn main() {
         .and(warp::path::end())
         .and(warp::query())
         .and(store_filter.clone())
-        .and_then(routes::question::get_questions)
-        .with(warp::trace(|info| {
-            tracing::info_span!(
-                "get_questions request",
-                method = %info.method(),
-                path = %info.path(),
-                id = %uuid::Uuid::new_v4()
-            )})
-        );
+        .and_then(routes::question::get_questions);
+        // .with(warp::trace(|info| {
+        //     tracing::info_span!(
+        //         "get_questions request",
+        //         method = %info.method(),
+        //         path = %info.path(),
+        //         id = %uuid::Uuid::new_v4()
+        //     )})
+        // );
 
     let add_question = warp::post()
         .and(warp::path("questions"))
