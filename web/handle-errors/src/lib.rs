@@ -6,6 +6,7 @@ use warp::{
 };
 
 use tracing::{event, Level, instrument};
+use argon2::Error as ArgonError;
 use reqwest::Error as ReqwestError;
 use reqwest_middleware::Error as MiddlewareReqwestError;
 #[derive(Debug, Clone)]
@@ -24,7 +25,12 @@ impl std::fmt::Display for APILayerError {
 pub enum CustomError {
     ParseError(std::num::ParseIntError),
     MissingParameters,
-    DatabaseQueryError,
+    WrongPassword,
+    CannotDecryptToken,
+    Unauthorized,
+    ArgonLibraryError(ArgonError),
+    DatabaseQueryError(sqlx::Error),
+    MigrationError(sqlx::migrate::MigrateError),
     ReqwestAPIError(ReqwestError),
     MiddlewareReqwestAPIError(MiddlewareReqwestError),
     ClientError(APILayerError),
@@ -37,9 +43,19 @@ impl std::fmt::Display for CustomError {
                 write!(f, "Cannot parse paramenter: {}", err)
             }
             CustomError::MissingParameters => write!(f, "Missing paramenter"),
-            CustomError::DatabaseQueryError => {
+            CustomError::WrongPassword => write!(f, "Wrong password"),
+            CustomError::CannotDecryptToken => write!(f, "Cannot decrypt error"),
+            CustomError::Unauthorized => write!(
+                f,
+                "No permission to change the underlying resource"
+            ),
+            CustomError::ArgonLibraryError(_) => {
+                write!(f, "Cannot verifiy password")
+            },
+            CustomError::DatabaseQueryError(_) => {
                 write!(f, "Cannot update, invalid data.")
             },
+            CustomError::MigrationError(_) => write!(f, "Cannot migrate data"),
             CustomError::ReqwestAPIError(err) => {
                 write!(f, "External API error: {}", err)
             },
@@ -57,22 +73,54 @@ impl std::fmt::Display for CustomError {
 }
 impl Reject for CustomError {}
 impl Reject for APILayerError {}
+const DUPLICATE_KEY: u32 = 23505;
 
 #[instrument]
 pub async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
-    if let Some(crate::CustomError::DatabaseQueryError) = r.find() {
+    if let Some(crate::CustomError::DatabaseQueryError(e)) = r.find() {
         event!(Level::ERROR, "Database query error");
-        Ok(warp::reply::with_status(
-            crate::CustomError::DatabaseQueryError.to_string(),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ))
+
+        match e {
+            sqlx::Error::Database(err) => {
+                if err.code().unwrap().parse::<u32>().unwrap()
+                    == DUPLICATE_KEY
+                {
+                    Ok(warp::reply::with_status(
+                        "Account already exsists".to_string(),
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                    ))
+                } else {
+                    Ok(warp::reply::with_status(
+                        "Cannot update data".to_string(),
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                    ))
+                }
+            }
+            _ => Ok(warp::reply::with_status(
+                "Cannot update data".to_string(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )),
+        }
     } else if let Some(crate::CustomError::ReqwestAPIError(e)) = r.find() { 
         event!(Level::ERROR, "{}", e);
         Ok(warp::reply::with_status(
             "Internal Server Error".to_string(),
             StatusCode::INTERNAL_SERVER_ERROR,
         ))
-    } else if let Some(crate::CustomError::MiddlewareReqwestAPIError(e)) = r.find() {
+    }  else if let Some(crate::CustomError::Unauthorized) = r.find() {
+        event!(Level::ERROR, "Not matching account id");
+        Ok(warp::reply::with_status(
+            "No permission to change underlying resource".to_string(),
+            StatusCode::UNAUTHORIZED,
+        ))
+    } else if let Some(crate::CustomError::WrongPassword) = r.find() {
+        event!(Level::ERROR, "Entered wrong password");
+        Ok(warp::reply::with_status(
+            "Wrong E-Mail/Password combination".to_string(),
+            StatusCode::UNAUTHORIZED,
+        )) 
+    }
+    else if let Some(crate::CustomError::MiddlewareReqwestAPIError(e)) = r.find() {
         event!(Level::ERROR, "{}", e);
         Ok(warp::reply::with_status(
             "Internal Server Error".to_string(),

@@ -4,6 +4,7 @@ use sqlx::Row;
 use handle_errors::CustomError;
 
 use crate::types::{
+    account::{Account, AccountId},
     answer::{Answer, AnswerId, NewAnswer},
     question::{NewQuestion, Question, QuestionId},
 };
@@ -14,21 +15,18 @@ pub struct Store {
 }
 
 impl Store {
-    pub async fn new(db_url: &str) -> Self {
-        let db_pool = match PgPoolOptions::new()
+    pub async fn new(db_url: &str) -> Result<Self, sqlx::Error> {
+        tracing::warn!("{}", db_url);
+        let db_pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(db_url)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(e) => panic!("Couldn't establish DB connection: {}", e),
-        };
+            .connect("postgres://postgres:522017@localhost:5432/rustwebdev")
+            .await?;
 
-        Store {
+        Ok(Store {
             connection: db_pool,
-        }
+        })
     }
-
+    
     pub async fn get_questions(
         self,
         limit: Option<u32>,
@@ -49,19 +47,43 @@ impl Store {
             Ok(questions) => Ok(questions),
             Err(e) => {
                 tracing::event!(tracing::Level::ERROR, "{:?}", e);
-                Err(CustomError::DatabaseQueryError)
+                Err(CustomError::DatabaseQueryError(e))
             }
         }
     }
 
+    pub async fn is_question_owner(
+        &self,
+        question_id: i32,
+        account_id: &AccountId,
+    ) -> Result<bool, CustomError> {
+        match sqlx::query(
+            "SELECT * from questions where id = $1 and account_id = $2",
+        )
+        .bind(question_id)
+        .bind(account_id.0)
+        .fetch_optional(&self.connection)
+        .await
+        {
+            Ok(question) => Ok(question.is_some()),
+            Err(e) => {
+                tracing::event!(tracing::Level::ERROR, "{:?}", e);
+                Err(CustomError::DatabaseQueryError(e))
+            }
+        }
+    }
+
+
     pub async fn add_question(
         self,
         new_question: NewQuestion,
+        account_id: AccountId,
     ) -> Result<Question, CustomError> {
-        match sqlx::query("INSERT INTO questions (title, content, tags) VALUES ($1, $2, $3) RETURNING id, title, content, tags")
+        match sqlx::query("INSERT INTO questions (title, content, tags, account_id) VALUES ($1, $2, $3, $4) RETURNING id, title, content, tags")
             .bind(new_question.title)
             .bind(new_question.content)
             .bind(new_question.tags)
+            .bind(account_id.0)
             .map(|row: PgRow| Question {
 			    id: QuestionId(row.get("id")),
                 title: row.get("title"),
@@ -71,9 +93,9 @@ impl Store {
             .fetch_one(&self.connection)
             .await {
                 Ok(question) => Ok(question),
-                Err(e) => {
-                    tracing::event!(tracing::Level::ERROR, "{:?}", e);
-                    Err(CustomError::DatabaseQueryError)
+                Err(error) => {
+                    tracing::event!(tracing::Level::ERROR, "{:?}", error);
+                    Err(CustomError::DatabaseQueryError(error))
                 },
             }
     }
@@ -82,16 +104,18 @@ impl Store {
         self,
         question: Question,
         id: i32,
+        account_id: AccountId,
     ) -> Result<Question, CustomError> {
         match sqlx::query(
             "UPDATE questions SET title = $1, content = $2, tags = $3
-        WHERE id = $4
+        WHERE id = $4 AND account_id = $5
         RETURNING id, title, content, tags",
         )
         .bind(question.title)
         .bind(question.content)
         .bind(question.tags)
         .bind(id)
+        .bind(account_id.0)
         .map(|row: PgRow| Question {
             id: QuestionId(row.get("id")),
             title: row.get("title"),
@@ -102,36 +126,45 @@ impl Store {
         .await
         {
             Ok(question) => Ok(question),
-            Err(e) => {
-                tracing::event!(tracing::Level::ERROR, "{:?}", e);
-                Err(CustomError::DatabaseQueryError)
+            Err(error) => {
+                tracing::event!(tracing::Level::ERROR, "{:?}", error);
+                Err(CustomError::DatabaseQueryError(error))
             }
         }
     }
 
-    pub async fn delete_question(self, id: i32) -> Result<bool, CustomError> {
-        match sqlx::query("DELETE FROM questions WHERE id = $1")
-            .bind(id)
-            .execute(&self.connection)
-            .await
+    pub async fn delete_question(
+        self,
+        id: i32,
+        account_id: AccountId,
+    ) -> Result<bool, CustomError> {
+        match sqlx::query(
+            "DELETE FROM questions WHERE id = $1 AND account_id = $2",
+        )
+        .bind(id)
+        .bind(account_id.0)
+        .execute(&self.connection)
+        .await
         {
             Ok(_) => Ok(true),
             Err(e) => {
                 tracing::event!(tracing::Level::ERROR, "{:?}", e);
-                Err(CustomError::DatabaseQueryError)
+                Err(CustomError::DatabaseQueryError(e))
             }
         }
     }
 
     pub async fn add_answer(
-        &self,
+        self,
         new_answer: NewAnswer,
+        account_id: AccountId,
     ) -> Result<Answer, CustomError> {
         match sqlx::query(
-            "INSERT INTO answers (content, question_id) VALUES ($1, $2)",
+            "INSERT INTO answers (content, corresponding_question, account_id) VALUES ($1, $2, $3)",
         )
         .bind(new_answer.content)
         .bind(new_answer.question_id.0)
+        .bind(account_id.0)
         .map(|row: PgRow| Answer {
             id: AnswerId(row.get("id")),
             content: row.get("content"),
@@ -141,10 +174,80 @@ impl Store {
         .await
         {
             Ok(answer) => Ok(answer),
-            Err(e) => {
-                tracing::event!(tracing::Level::ERROR, "{:?}", e);
-                Err(CustomError::DatabaseQueryError)
+            Err(error) => {
+                tracing::event!(
+                    tracing::Level::ERROR,
+                    code = error
+                        .as_database_error()
+                        .unwrap()
+                        .code()
+                        .unwrap()
+                        .parse::<i32>()
+                        .unwrap(),
+                    db_message = error.as_database_error().unwrap().message(),
+                    constraint = error.as_database_error().unwrap().constraint().unwrap()
+                );
+                Err(CustomError::DatabaseQueryError(error))
             }
         }
     }
+
+    pub async fn add_account(
+        self,
+        account: Account,
+    ) -> Result<bool, CustomError> {
+        match sqlx::query(
+            "INSERT INTO accounts (email, password) VALUES ($1, $2)",
+        )
+        .bind(account.email)
+        .bind(account.password)
+        .execute(&self.connection)
+        .await
+        {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                tracing::event!(
+                    tracing::Level::ERROR,
+                    code = error
+                        .as_database_error()
+                        .unwrap()
+                        .code()
+                        .unwrap()
+                        .parse::<i32>()
+                        .unwrap(),
+                    db_message =
+                        error.as_database_error().unwrap().message(),
+                    constraint = error
+                        .as_database_error()
+                        .unwrap()
+                        .constraint()
+                        .unwrap()
+                );
+                Err(CustomError::DatabaseQueryError(error))
+            }
+        }
+    }
+
+    pub async fn get_account(
+        self,
+        email: String,
+    ) -> Result<Account, CustomError> {
+        match sqlx::query("SELECT * from accounts where email = $1")
+            .bind(email)
+            .map(|row: PgRow| Account {
+                id: Some(AccountId(row.get("id"))),
+                email: row.get("email"),
+                password: row.get("password"),
+            })
+            .fetch_one(&self.connection)
+            .await
+        {
+            Ok(account) => Ok(account),
+            Err(error) => {
+                tracing::event!(tracing::Level::ERROR, "{:?}", error);
+                Err(CustomError::DatabaseQueryError(error))
+            }
+        } 
+    }  
+
 }
