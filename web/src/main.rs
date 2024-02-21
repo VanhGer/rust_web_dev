@@ -2,16 +2,15 @@
 use handle_errors::return_error;
 use tracing_subscriber::fmt::format::FmtSpan;
 use warp::{http::Method, Filter};
+use dotenv;
 
 mod routes;
 mod store;
 mod types;
 mod config;
-mod profanity;
-
 #[tokio::main]
 async fn main() -> Result<(), handle_errors::CustomError>{
-
+    dotenv::dotenv().ok();
     let config = config::Config::new().expect("Cannot load Config file.");
 
     let log_filter = format!(
@@ -58,14 +57,6 @@ async fn main() -> Result<(), handle_errors::CustomError>{
         .and(warp::query())
         .and(store_filter.clone())
         .and_then(routes::question::get_questions);
-        // .with(warp::trace(|info| {
-        //     tracing::info_span!(
-        //         "get_questions request",
-        //         method = %info.method(),
-        //         path = %info.path(),
-        //         id = %uuid::Uuid::new_v4()
-        //     )})
-        // );
 
     let update_question = warp::put()
         .and(warp::path("questions"))
@@ -99,6 +90,14 @@ async fn main() -> Result<(), handle_errors::CustomError>{
         .and(store_filter.clone())
         .and(warp::body::form())
         .and_then(routes::answer::add_answer);
+   
+    let get_question_answers = warp::get()
+        .and(warp::path("answers"))
+        .and(warp::path::end())
+        .and(warp::query())
+        .and(store_filter.clone())
+        .and_then(routes::answer::get_question_answers);
+    
 
     let registration = warp::post()
         .and(warp::path("registration"))
@@ -119,6 +118,7 @@ async fn main() -> Result<(), handle_errors::CustomError>{
         .or(add_question)
         .or(delete_question)
         .or(add_answer)
+        .or(get_question_answers)
         .or(registration)
         .or(login)
         .with(cors)

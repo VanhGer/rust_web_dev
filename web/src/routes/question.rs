@@ -1,24 +1,28 @@
-use handle_errors::CustomError;
-use serde::{Deserialize, Serialize};
+
 use std::collections::HashMap;
 use warp::http::StatusCode;
-use tracing::{instrument, info};
+use tracing::{instrument};
 
 use crate::types::pagination::Pagination;
 use tracing::{event, Level};
 use crate::types::question::NewQuestion;
 use crate::types::account::Session;
-use crate::profanity::check_profanity;
 
 use crate::{
     store::Store,
     types::{
         pagination::extract_pagination,
-        question::{Question, QuestionId},
+        question::{Question},
     },
 };
 
-
+/// This function gets a list of all the questions from '/questions' route
+/// # Example query
+/// GET requests to this route, with the query params:
+/// limit, offset
+/// ```
+/// /answers?limit=10&offset=0&question_id=1
+/// ```
 
 #[instrument]
 pub async fn get_questions(
@@ -39,27 +43,28 @@ pub async fn get_questions(
     }
 }
 
-
-
+/// Add a question from `/questions` route
+/// # Example query
+/// POST requests to this route, with the body format is
+/// json with 3 key-value:
+///```
+/// {
+///     "title": "Tai vi sao",
+///     "content": "Yeahh, cam xuc kia quay ve"
+///     "tags": "messi"
+/// }
+///```
+#[instrument]
 pub async fn add_question(
     session: Session,
     store: Store,
     new_question: NewQuestion,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let account_id = session.account_id;
-    let title = match check_profanity(new_question.title).await {
-        Ok(res) => res,
-        Err(e) => return Err(warp::reject::custom(e)),
-    };
-
-    let content = match check_profanity(new_question.content).await {
-        Ok(res) => res,
-        Err(e) => return Err(warp::reject::custom(e)),
-    };
 
     let question = NewQuestion {
-        title,
-        content,
+        title: new_question.title,
+        content: new_question.content,
         tags: new_question.tags,
     };
 
@@ -69,6 +74,18 @@ pub async fn add_question(
     }
 }
 
+/// Update an existing question from `/questions` route
+/// # Example query
+/// PUT requests to this route, with the body format is
+/// json with the id of the question and any of 3 key-value
+/// we want to update:
+///```
+/// {
+///     "id":   "3",  
+///     "title": "Tai vi sao"
+/// }
+///```
+#[instrument]
 pub async fn update_question(
     id: i32,
     session: Session,
@@ -77,32 +94,31 @@ pub async fn update_question(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let account_id = session.account_id;
     if store.is_question_owner(id, &account_id).await? {
-        let title = check_profanity(question.title);
-        let content = check_profanity(question.content);
-
-        let (title, content) = tokio::join!(title, content);
-
-        if title.is_ok() && content.is_ok() {
-            let question = Question {
-                id: question.id,
-                title: title.unwrap(),
-                content: content.unwrap(),
-                tags: question.tags,
-            };
-            match store.update_question(question, id, account_id).await {
-                Ok(res) => Ok(warp::reply::json(&res)),
-                Err(e) => Err(warp::reject::custom(e)),
-            }
-        } else {
-            Err(warp::reject::custom(
-                title.expect_err("Expected API call to have failed here"),
-            ))
+        let question = Question {
+            id: question.id,
+            title: question.title,
+            content: question.content,
+            tags: question.tags,
+        };
+        match store.update_question(question, id, account_id).await {
+            Ok(res) => Ok(warp::reply::json(&res)),
+            Err(e) => Err(warp::reject::custom(e)),
         }
+        
     } else {
         Err(warp::reject::custom(handle_errors::CustomError::Unauthorized))
     }
 }
 
+
+/// Delete an existing question from `/questions/question_id` route
+/// # Example query
+/// DELETE requests to this route, with the query is
+/// the id of the question we want to delete
+///```
+/// /questions/2
+///```
+#[instrument]
 pub async fn delete_question(
     id: i32,
     session: Session,

@@ -8,18 +8,26 @@ use crate::types::{
     answer::{Answer, AnswerId, NewAnswer},
     question::{NewQuestion, Question, QuestionId},
 };
-
+/// The Store object represents the connection and interaction 
+/// with a PostgreSQL database.
 #[derive(Debug, Clone)]
 pub struct Store {
-    pub connection: PgPool,
+    /// Connection to the PostgreSQL database.
+    pub connection: PgPool, 
 }
 
 impl Store {
+    /// This function creates a new Store object from the given database URL.
+    /// # Example usage
+    /// ```rust
+    /// let store = store::Store::new(postgres://username@password/host:port/databse)
+    ///             .await?;
+    /// ```
     pub async fn new(db_url: &str) -> Result<Self, sqlx::Error> {
         tracing::warn!("{}", db_url);
         let db_pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect("postgres://postgres:522017@localhost:5432/rustwebdev")
+            .connect(db_url)
             .await?;
 
         Ok(Store {
@@ -27,6 +35,8 @@ impl Store {
         })
     }
     
+    /// This function retrieves a list of questions from the database with
+    /// optional limits and offsets.
     pub async fn get_questions(
         self,
         limit: Option<u32>,
@@ -52,6 +62,7 @@ impl Store {
         }
     }
 
+    /// This function checks if a user is the owner of a question.
     pub async fn is_question_owner(
         &self,
         question_id: i32,
@@ -73,7 +84,7 @@ impl Store {
         }
     }
 
-
+    /// This function adds a new question to the database.
     pub async fn add_question(
         self,
         new_question: NewQuestion,
@@ -100,6 +111,7 @@ impl Store {
             }
     }
 
+    /// This function updates an existing question in the database.
     pub async fn update_question(
         self,
         question: Question,
@@ -133,16 +145,45 @@ impl Store {
         }
     }
 
+    /// This function deletes a question from the database.
     pub async fn delete_question(
         self,
         id: i32,
         account_id: AccountId,
     ) -> Result<bool, CustomError> {
+        
+        match self.clone().delete_all_question_answers(id).await {
+            Ok(_) => {
+                match sqlx::query("DELETE FROM questions WHERE id = $1 AND account_id = $2",)
+                    .bind(id)
+                    .bind(account_id.0)
+                    .execute(&self.connection)
+                    .await
+                {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        tracing::event!(tracing::Level::ERROR, "{:?}", e);
+                        Err(CustomError::DatabaseQueryError(e))
+                    }
+                }
+            },
+            Err(e) => {
+                tracing::event!(tracing::Level::ERROR, "{:?}", e);
+                Err(e)   
+            }
+        }
+    }
+
+    /// This function deletes all answers associated with a specific 
+    /// question from the database.
+    async fn delete_all_question_answers(
+        self,
+        id: i32,
+    ) -> Result<bool, CustomError> {
         match sqlx::query(
-            "DELETE FROM questions WHERE id = $1 AND account_id = $2",
+            "DELETE FROM answers WHERE corresponding_question = $1",
         )
         .bind(id)
-        .bind(account_id.0)
         .execute(&self.connection)
         .await
         {
@@ -154,13 +195,16 @@ impl Store {
         }
     }
 
+    /// This function adds a new answer to the database.
     pub async fn add_answer(
         self,
         new_answer: NewAnswer,
         account_id: AccountId,
     ) -> Result<Answer, CustomError> {
+
         match sqlx::query(
-            "INSERT INTO answers (content, corresponding_question, account_id) VALUES ($1, $2, $3)",
+            "INSERT INTO answers (content, corresponding_question, account_id) VALUES ($1, $2, $3)
+            RETURNING id, content, corresponding_question",
         )
         .bind(new_answer.content)
         .bind(new_answer.question_id.0)
@@ -168,7 +212,7 @@ impl Store {
         .map(|row: PgRow| Answer {
             id: AnswerId(row.get("id")),
             content: row.get("content"),
-            question_id: QuestionId(row.get("question_id")),
+            question_id: QuestionId(row.get("corresponding_question")),
         })
         .fetch_one(&self.connection)
         .await
@@ -187,11 +231,41 @@ impl Store {
                     db_message = error.as_database_error().unwrap().message(),
                     constraint = error.as_database_error().unwrap().constraint().unwrap()
                 );
+
                 Err(CustomError::DatabaseQueryError(error))
             }
         }
     }
 
+    /// This function retrieves a list of answers for a specific question 
+    /// from the database with optional limits and offsets.
+    pub async fn get_question_answers(
+        self,
+        limit: Option<u32>,
+        offset: u32,
+        question_id: i32,
+    ) -> Result<Vec<Answer>, CustomError> {
+        match sqlx::query("SELECT * from answers where corresponding_question = $1 LIMIT $2 OFFSET $3")
+            .bind(question_id)
+            .bind(limit)
+            .bind(offset)
+            .map(|row: PgRow| Answer {
+                id: AnswerId(row.get("id")),
+                content: row.get("content"),
+                question_id: QuestionId(question_id),
+            })
+            .fetch_all(&self.connection)
+            .await
+        {
+            Ok(answers) => Ok(answers),
+            Err(e) => {
+                tracing::event!(tracing::Level::ERROR, "{:?}", e);
+                Err(CustomError::DatabaseQueryError(e))
+            }
+        }
+    }
+
+    /// This function adds a new account to the database.
     pub async fn add_account(
         self,
         account: Account,
@@ -228,6 +302,7 @@ impl Store {
         }
     }
 
+    /// This function retrieves an account from the database by its email address.
     pub async fn get_account(
         self,
         email: String,
