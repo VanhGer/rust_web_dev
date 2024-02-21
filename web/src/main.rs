@@ -10,6 +10,7 @@ mod types;
 mod config;
 #[tokio::main]
 async fn main() -> Result<(), handle_errors::CustomError>{
+
     dotenv::dotenv().ok();
     let config = config::Config::new().expect("Cannot load Config file.");
 
@@ -18,7 +19,7 @@ async fn main() -> Result<(), handle_errors::CustomError>{
         config.log_level, config.log_level, config.log_level
     );
 
-    
+    // create store.
     let store = store::Store::new(&format!(
         "postgres://{}:{}@{}:{}/{}",
         config.db_user,
@@ -30,6 +31,7 @@ async fn main() -> Result<(), handle_errors::CustomError>{
     .await
     .map_err(|e| handle_errors::CustomError::DatabaseQueryError(e))?;
 
+    // migrate database
     sqlx::migrate!()
         .run(&store.clone().connection)
         .await.map_err(|e| {
@@ -128,6 +130,7 @@ async fn main() -> Result<(), handle_errors::CustomError>{
 
     tracing::info!("Q&A service build ID {}", env!("RUST_WEB_DEV_VERSION"));
     
+    /// run server
     warp::serve(routes).run(([127, 0, 0, 1], config.port)).await;
 
     Ok(())

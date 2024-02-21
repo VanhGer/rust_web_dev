@@ -51,7 +51,7 @@ pub async fn get_questions(
 /// {
 ///     "title": "Tai vi sao",
 ///     "content": "Yeahh, cam xuc kia quay ve"
-///     "tags": "messi"
+///     "tags": ["messi", "1a"]
 /// }
 ///```
 #[instrument]
