@@ -9,6 +9,8 @@ use tracing::{event, Level, instrument};
 use argon2::Error as ArgonError;
 use reqwest::Error as ReqwestError;
 use reqwest_middleware::Error as MiddlewareReqwestError;
+
+/// Define a custom error struct for errors at the API layer
 #[derive(Debug, Clone)]
 pub struct APILayerError { 
     pub status: u16,
@@ -21,6 +23,7 @@ impl std::fmt::Display for APILayerError {
     }
 }
 
+//  This is a custom error enum to represent various types of errors
 #[derive(Debug)]
 pub enum CustomError {
     ParseError(std::num::ParseIntError),
@@ -36,6 +39,7 @@ pub enum CustomError {
     ClientError(APILayerError),
     ServerError(APILayerError)
 }
+
 impl std::fmt::Display for CustomError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &*self {
@@ -75,6 +79,7 @@ impl Reject for CustomError {}
 impl Reject for APILayerError {}
 const DUPLICATE_KEY: u32 = 23505;
 
+/// This function defines an async function to return an error response for rejected requests
 #[instrument]
 pub async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
     if let Some(crate::CustomError::DatabaseQueryError(e)) = r.find() {
