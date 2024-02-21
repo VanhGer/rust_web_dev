@@ -7,6 +7,17 @@ use warp::{http::StatusCode, Filter};
 use crate::store::Store;
 use crate::types::account::{Account, AccountId, Session};
 
+/// This function handles the registration process for 
+///the '/register' route.
+/// # Example query
+/// POST requests to this route, with the body format is
+/// json:
+/// ```
+/// {
+///      "email": "vanhg@gmail.com",
+///      "password": "1"
+/// }
+/// ```
 pub async fn register(
     store: Store,
     account: Account,
@@ -27,6 +38,18 @@ pub async fn register(
     }
 }
 
+/// This function handles the login process for 
+///the '/login' route.
+/// # Example query
+/// POST requests to this route, with the body format is
+/// json, including email and password.
+/// ```
+/// {
+///      "email": "vanhg@gmail.com",
+///      "password": "1"
+/// }
+/// ```
+/// The response is the token we use to authentication.
 pub async fn login(
     store: Store,
     login: Account,
@@ -55,6 +78,8 @@ pub async fn login(
     }
 }
 
+/// This function verifies the authenticity of a token
+/// provided by user.
 pub fn verify_token(
     token: String,
 ) -> Result<Session, handle_errors::CustomError> {
@@ -71,12 +96,14 @@ pub fn verify_token(
         .map_err(|_| handle_errors::CustomError::CannotDecryptToken)
 }
 
+/// This function hash the password.
 fn hash_password(password: &[u8]) -> String {
     let salt = rand::thread_rng().gen::<[u8; 32]>();
     let config = Config::default();
     argon2::hash_encoded(password, &salt, &config).unwrap()
 }
 
+/// This function verifies a password against a hash using argon2
 fn verify_password(
     hash: &str,
     password: &[u8], 
@@ -84,6 +111,7 @@ fn verify_password(
     argon2::verify_encoded(hash, password)
 }
 
+/// This function issues a token for authentication. 
 fn issue_token(account_id: AccountId) -> String {
     let key = env::var("PASETO_KEY").unwrap();
     let current_date_time = Utc::now();
@@ -98,6 +126,7 @@ fn issue_token(account_id: AccountId) -> String {
         .expect("Failed to construct paseto token w/ builder!")
 }
 
+/// Authentication filter for routes requiring authorization
 pub fn auth(
 ) -> impl Filter<Extract = (Session,), Error = warp::Rejection> + Clone {
     warp::header::<String>("Authorization").and_then(|token: String| {
@@ -108,4 +137,19 @@ pub fn auth(
 
         future::ready(Ok(token))
     })
+}
+
+#[cfg(test)]
+mod authentication_tests {
+    use super::{auth, env, issue_token, AccountId};
+    #[tokio::test]
+    async fn post_questions_auth() {
+        env::set_var("PASETO_KEY", "vanhg dep trai vanhg dep trai vv"); 
+        let token = issue_token(AccountId(3)); 
+        let filter = auth();
+        let res = warp::test::request()
+        .header("Authorization", token)
+        .filter(&filter); 
+        assert_eq!(res.await.unwrap().account_id, AccountId(3)); 
+    }
 }

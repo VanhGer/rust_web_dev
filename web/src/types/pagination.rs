@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 /// Pagination struct that is getting extracted
 /// from query params
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq)]
 pub struct Pagination {
     /// The index of the last item which has to be returned
     pub limit: Option<u32>, 
@@ -46,6 +46,35 @@ pub fn extract_pagination(params: HashMap<String, String>) -> Result<Pagination,
                 .map_err(CustomError::ParseError)?,
         });
     }
-
     Err(CustomError::MissingParameters)
+}
+
+
+#[cfg(test)] 
+mod pagination_tests { 
+    use super::{HashMap, extract_pagination, Pagination, CustomError}; 
+
+    #[test] 
+    fn valid_pagination() { 
+        let mut params = HashMap::new();
+        params.insert(String::from("limit"), String::from("1"));
+        params.insert(String::from("offset"), String::from("1"));
+        let pagination_result = extract_pagination(params);
+        let expected = Pagination { 
+            limit: Some(1),
+            offset: 1
+        };
+        assert_eq!(pagination_result.unwrap(), expected); 
+    }
+}
+
+#[test]
+fn missing_offset_parameter() {
+        let mut params = HashMap::new();
+        params.insert(String::from("limit"), String::from("1"));
+
+        let pagination_result = format!("{}", extract_pagination(params).unwrap_err());
+        let expected = format!("{}", CustomError::MissingParameters);
+
+        assert_eq!(pagination_result, expected);
 }
