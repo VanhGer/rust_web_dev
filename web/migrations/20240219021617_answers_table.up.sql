@@ -1,3 +1,5 @@
+-- Create answers table
+
 CREATE TABLE IF NOT EXISTS answers (
     id serial PRIMARY KEY,
     content TEXT NOT NULL,

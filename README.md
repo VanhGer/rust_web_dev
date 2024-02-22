@@ -31,31 +31,34 @@ git clone https://github.com/VanhGer/rust_web_dev.git
 ```
 #### Configure the database:
 
-First, navigate to the project directory and run: 
+First, you need to configure the database via `.env` file. This is some values we need to consider:
+```
+POSTGRES_HOST = "localhost"
+
+POSTGRES_PORT = 5432
+
+POSTGRES_DB = "rustwebdev"
+
+POSTGRES_USER = "postgres"
+
+POSTGRES_PASSWORD = "522017"
+```
+
+Here, you will define your database name in `POSTGRES_DB`, database user in `POSTGRES_USER`, password via `POSTGRES_PASSWORD`.
+
+Then, navigate to the project directory and run: 
 ```
 docker-compose up -d
 ```
 
 Then, you need to configure the database which created by Docker. \
-Access to that database, then create user and password (here, I use `postgres` user):
+
+You can also access to that database via this command:
 
 ```
-psql -U postgres
+psql -U username -d database_name
 ```
 
-In the **psql** console, change the password: 
-```
-postgres=# \password postgres
-Enter new password: <new-password>
-```
-
-Then, create a database name `<your_database_name>`:
-```
-postgres=# create database <your_database_name>;
-DATABASE CREATED;
-```
-
-After that, you need to create an `.env` file likes `.env.example` file, which will contain your username, password and database name.
 
 #### Run
 
