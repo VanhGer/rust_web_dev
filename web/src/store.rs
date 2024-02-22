@@ -19,7 +19,7 @@ pub struct Store {
 impl Store {
     /// This function creates a new Store object from the given database URL.
     /// # Example usage
-    /// ```rust
+    /// ``` text
     /// let store = store::Store::new(postgres://username@password/host:port/databse)
     ///             .await?;
     /// ```

@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::env;
 
-/// Q&A web service API
+/// Q&A web service configuration
 #[derive(Parser, Debug, PartialEq)]
 #[clap(author, version, about, long_about = None)]
 pub struct Config {
